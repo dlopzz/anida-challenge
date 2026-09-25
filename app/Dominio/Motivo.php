@@ -1,0 +1,13 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Dominio;
+
+enum Motivo: string
+{
+    case RELACION_CUOTA_INGRESO_EXCEDIDA = 'RELACION_CUOTA_INGRESO_EXCEDIDA';
+    case ANTIGUEDAD_INSUFICIENTE = 'ANTIGUEDAD_INSUFICIENTE';
+    case MONTO_ALTO = 'MONTO_ALTO';
+    case BUREAU_NO_DISPONIBLE = 'BUREAU_NO_DISPONIBLE';
+}
