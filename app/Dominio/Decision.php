@@ -37,6 +37,19 @@ final class Decision
         return new self($estado, $motivos);
     }
 
+    /**
+     * El bureau no respondió. Un rechazo sigue siendo rechazo (no necesita al bureau);
+     * cualquier otra decisión pasa a revisión manual, conservando sus motivos.
+     */
+    public function sinBureau(): self
+    {
+        if ($this->estado === Estado::RECHAZADA) {
+            return $this;
+        }
+
+        return new self(Estado::REVISION_MANUAL, [...$this->motivos, Motivo::BUREAU_NO_DISPONIBLE]);
+    }
+
     /** @return string[] */
     public function motivosComoTexto(): array
     {

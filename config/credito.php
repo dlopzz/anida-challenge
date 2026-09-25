@@ -16,4 +16,11 @@ return [
 
     // Identificador de la versión de reglas vigente.
     'reglas_version' => env('CREDITO_REGLAS_VERSION', '2026-09-25.1'),
+
+    // Bureau de crédito simulado: cuánto tarda, cuánto se espera y con qué probabilidad falla.
+    'bureau' => [
+        'latencia_ms' => (int) env('BUREAU_LATENCIA_MS', 0),
+        'timeout_ms' => (int) env('BUREAU_TIMEOUT_MS', 2000),
+        'tasa_fallo' => (float) env('BUREAU_TASA_FALLO', 0),
+    ],
 ];

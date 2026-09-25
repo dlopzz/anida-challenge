@@ -1,59 +1,74 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Evaluación de una solicitud de crédito
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+API que recibe una solicitud de préstamo personal y responde si se aprueba, se rechaza o pasa a
+revisión manual, siempre con los motivos. PHP 8.2, Laravel 12, SQLite.
 
-## About Laravel
+## Cómo correrlo
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+```bash
+composer install
+cp .env.example .env && php artisan key:generate
+touch database/database.sqlite && php artisan migrate
+php artisan serve            # http://127.0.0.1:8000
+php artisan test             # 47 tests
+```
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+Con Docker: `docker compose up --build` y queda en `http://127.0.0.1:8000`.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+```bash
+curl -X POST http://127.0.0.1:8000/solicitudes \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: abc' \
+  -d '{"cuit":"20-12345678-6","ingreso_mensual":900000,"antiguedad_laboral_meses":18,"monto_solicitado":1000000,"cuotas":12,"tna":60}'
+```
 
-## Learning Laravel
+| Caso | Código |
+|---|---|
+| Solicitud nueva | 201 |
+| Misma `Idempotency-Key` con el mismo cuerpo | 200, misma respuesta, sin fila nueva |
+| Misma `Idempotency-Key` con otro cuerpo | 409 |
+| Sin `Idempotency-Key` | 400 |
+| CUIT inválido o cuerpo incompleto | 422 |
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+## Cómo está organizado
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+Hexagonal dentro de Laravel. El núcleo no conoce el framework:
 
-## Laravel Sponsors
+- `app/Dominio/` — las reglas. `Cuit`, `Dinero` (centavos enteros), `CalculadoraCuota`
+  (sistema francés), `PoliticaDeCredito`, `Decision`, `Umbrales`, y los puertos
+  (`SolicitudRepositorio`, `Bureau`, `GeneradorDeIds`). Se prueba sin base ni HTTP.
+- `app/Aplicacion/EvaluarSolicitud.php` — el caso de uso: idempotencia → cuota → política →
+  bureau → guardar. No tiene reglas propias.
+- `app/Infraestructura/` — los adaptadores: repositorio Eloquent, bureau simulado, UUID.
+- `app/Http/` — el borde HTTP: validación de forma (422), controlador, respuesta.
+- `app/Providers/AppServiceProvider.php` — el único lugar donde se enchufan adaptadores a puertos.
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+## Decisiones
 
-### Premium Partners
+- **Dinero en centavos enteros.** La API recibe pesos enteros y se multiplica por 100 al entrar.
+  La comparación cuota/ingreso se hace en enteros: `cuota × 100 > ingreso × porcentaje`.
+- **Un centavo de diferencia con el ejemplo del enunciado.** La fórmula exacta con P = 1.000.000,
+  TNA 60 % y n = 12 da 112.825,41002…, que redondeado al centavo es **112.825,41**
+  (`11282541`). El enunciado muestra 112.825,40; ese valor sale de redondear algún paso
+  intermedio. Elegí la fórmula exacta con un único redondeo al final; el test lo documenta.
+  Cambiarlo es una línea en `CalculadoraCuota`.
+- **Bordes.** "Supera el 30 %" es estrictamente mayor: al 30 % exacto se aprueba. Antigüedad de
+  6 meses cumple. Monto de 5.000.000 exacto no es alto. TNA 0 divide el capital en partes iguales.
+- **Motivos.** Se acumulan todos los rechazos (cuota y antigüedad pueden ir juntos).
+  `MONTO_ALTO` sólo aparece si no hay rechazo. Aprobada lleva `motivos: []`.
+- **Umbrales y versión de reglas** en `config/credito.php`, leídos de `.env`. Cada solicitud
+  guarda `reglas_version`, así se sabe con qué reglas se decidió.
+- **Idempotencia.** `idempotency_key` es `UNIQUE` en la tabla, y se guarda un hash canónico del
+  cuerpo (valores normalizados, claves en orden fijo). Mismo hash → se devuelve lo guardado;
+  otro hash → 409. Si dos requests idénticos llegan a la vez, el `UNIQUE` deja pasar uno; el
+  otro captura la violación, relee y responde con el que ganó.
+- **Bureau (opcional).** Un rechazo no lo consulta. Si el bureau falla o excede el timeout, la
+  solicitud se guarda igual en `revision_manual` con `BUREAU_NO_DISPONIBLE`, conservando otros
+  motivos. Para simularlo: `BUREAU_TASA_FALLO=1` o `BUREAU_LATENCIA_MS=3000` en `.env`.
+- **Laravel** porque es donde llego más rápido a código que corre. El dominio no depende de él:
+  montarlo sobre Symfony es reemplazar controlador, validación y repositorio.
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+## Qué quedó afuera
 
-## Contributing
-
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
-
-## Code of Conduct
-
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Autenticación y límites de uso. Historial de umbrales por fecha (hoy hay una versión vigente).
+Reintentos o cola para el bureau. El informe del bureau no alimenta ninguna regla, porque el
+enunciado no lo pide.

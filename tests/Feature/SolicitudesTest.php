@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Dominio\Cuit;
+use App\Dominio\Excepciones\BureauNoDisponible;
+use App\Dominio\InformeBureau;
+use App\Dominio\Puertos\Bureau;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
@@ -148,6 +152,45 @@ final class SolicitudesTest extends TestCase
 
         $this->assertNotSame($primera->json('id'), $segunda->json('id'));
         $this->assertDatabaseCount('solicitudes', 2);
+    }
+
+    public function test_si_el_bureau_falla_queda_en_revision_manual_y_se_guarda(): void
+    {
+        $this->conBureauCaido();
+
+        $respuesta = $this->solicitar(self::EJEMPLO, 'key-1');
+
+        $respuesta->assertStatus(201)
+            ->assertJson([
+                'decision' => 'revision_manual',
+                'motivos' => ['BUREAU_NO_DISPONIBLE'],
+            ]);
+
+        $this->assertDatabaseHas('solicitudes', [
+            'id' => $respuesta->json('id'),
+            'decision' => 'revision_manual',
+        ]);
+    }
+
+    public function test_un_rechazo_no_consulta_al_bureau(): void
+    {
+        $this->conBureauCaido();
+
+        $this->solicitar(['ingreso_mensual' => 300000] + self::EJEMPLO, 'key-1')
+            ->assertJson([
+                'decision' => 'rechazada',
+                'motivos' => ['RELACION_CUOTA_INGRESO_EXCEDIDA'],
+            ]);
+    }
+
+    private function conBureauCaido(): void
+    {
+        $this->app->instance(Bureau::class, new class implements Bureau {
+            public function consultar(Cuit $cuit): InformeBureau
+            {
+                throw new BureauNoDisponible('simulado');
+            }
+        });
     }
 
     /** @param array<string, mixed> $cuerpo */

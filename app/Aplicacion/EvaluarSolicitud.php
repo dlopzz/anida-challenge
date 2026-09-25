@@ -8,14 +8,17 @@ use App\Aplicacion\Excepciones\SolicitudDuplicadaConOtroCuerpo;
 use App\Dominio\CalculadoraCuota;
 use App\Dominio\Cuit;
 use App\Dominio\Dinero;
+use App\Dominio\Estado;
+use App\Dominio\Excepciones\BureauNoDisponible;
 use App\Dominio\Excepciones\ClaveIdempotenciaDuplicada;
 use App\Dominio\PoliticaDeCredito;
+use App\Dominio\Puertos\Bureau;
 use App\Dominio\Puertos\GeneradorDeIds;
 use App\Dominio\Puertos\SolicitudRepositorio;
 use App\Dominio\Solicitud;
 
 /**
- * Caso de uso. Coordina: idempotencia → cuota → política → guardar.
+ * Caso de uso. Coordina: idempotencia → cuota → política → bureau → guardar.
  * No tiene reglas de negocio propias: eso vive en el dominio.
  */
 final class EvaluarSolicitud
@@ -25,6 +28,7 @@ final class EvaluarSolicitud
         private readonly GeneradorDeIds $ids,
         private readonly CalculadoraCuota $calculadora,
         private readonly PoliticaDeCredito $politica,
+        private readonly Bureau $bureau,
     ) {
     }
 
@@ -40,14 +44,26 @@ final class EvaluarSolicitud
         $monto = Dinero::desdePesos($comando->montoSolicitadoPesos);
         $ingreso = Dinero::desdePesos($comando->ingresoMensualPesos);
 
+        $cuit = Cuit::desde($comando->cuit);
+
         $cuota = $this->calculadora->calcular($monto, $comando->tna, $comando->cuotas);
         $decision = $this->politica->evaluar($cuota, $ingreso, $comando->antiguedadLaboralMeses, $monto);
+
+        // Un rechazo no necesita al bureau. Si el bureau falla, la solicitud no se pierde:
+        // queda en revisión manual con el motivo, y se guarda igual.
+        if ($decision->estado !== Estado::RECHAZADA) {
+            try {
+                $this->bureau->consultar($cuit);
+            } catch (BureauNoDisponible) {
+                $decision = $decision->sinBureau();
+            }
+        }
 
         $solicitud = new Solicitud(
             id: $this->ids->nuevo(),
             idempotencyKey: $comando->idempotencyKey,
             cuerpoHash: $cuerpoHash,
-            cuit: Cuit::desde($comando->cuit),
+            cuit: $cuit,
             ingresoMensual: $ingreso,
             antiguedadLaboralMeses: $comando->antiguedadLaboralMeses,
             montoSolicitado: $monto,
