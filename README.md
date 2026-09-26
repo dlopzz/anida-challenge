@@ -42,6 +42,15 @@ Hexagonal dentro de Laravel. El núcleo no conoce el framework:
 - `app/Http/` — el borde HTTP: validación de forma (422), controlador, respuesta.
 - `app/Providers/AppServiceProvider.php` — el único lugar donde se enchufan adaptadores a puertos.
 
+## Tests
+
+- **Unitarios** (`tests/Unit/`): dominio puro, sin Laravel ni base. CUIT, dinero, cuota,
+  política de crédito, decisión, y el bureau simulado. Cubren los casos límite de cada regla
+  (30 % exacto, antigüedad 6, monto 5.000.000, TNA 0, CUIT con resto 1).
+- **De integración** (`tests/Feature/`): la API completa contra SQLite en memoria. Códigos
+  201/200/409/400/422, persistencia con versión de reglas, umbrales desde configuración,
+  hash canónico, y bureau caído (queda en revisión manual y se guarda).
+
 ## Decisiones
 
 - **Dinero en centavos enteros.** La API recibe pesos enteros y se multiplica por 100 al entrar.
